@@ -1,0 +1,116 @@
+#+TITLE: NITE README
+#+AUTHOR: Pavel Penev (Lispegistus) <lispegistus@strangestack.com>
+#+OPTIONS: h:4
+#+STARTUP: showeverything
+#+OPTIONS: toc:nil
+
+* Note on GitHub
+
+#+BEGIN_EXPORT html
+<a href="https://nogithub.codeberg.page"><img src="https://nogithub.codeberg.page/badge.svg" alt="Please don't upload to GitHub"></a>
+#+END_EXPORT
+*Please do not upload this code to GitHub. Although the license grants you that right, I urge you to use open source alternatives like [[https://codeberg.org/][Codeberg]] or a self-hosted forge.*
+
+* Nite Web Framework
+
+Common Lisp Web Framework based on [[https://github.com/fukamachi/clack][clack]]. Designed for building Restful Web applications. Project is hosted on [[https://code.strangestack.com/StrangeStackPublic/nite][code.strangestack.com]].
+
+#+TOC: headlines 3
+
+** Installation
+
+Simply clone in a place ASDF can find it and run:
+
+#+begin_src common-lisp
+(ql:quicklisp :nite)
+#+end_src
+
+** Status
+
+Nite aims to be a full featured web framework, inspired in part by Django REST Framework and Restas. Currently only the core functionality is implemented, defining routes and handlers. Eventually integration with an ORM, templating engine, and more complicated types of request handlers will be implemented. The core API should be more or less stable at this point, although such a guarantee cannot be made before version 1.0.0.
+
+Current semantic version: 0.1.0
+
+** Basic example
+
+#+begin_src common-lisp
+(defpackage #:nite.example
+  (:use #:cl)
+  (:import-from #:nite.handler
+                #:define-handler
+                #:define-handler-set)
+  (:import-from #:nite.app
+                #:define-app)
+  (:import-from #:clack
+                #:clackup))
+
+(in-package #:nite.example)
+
+(define-handler index (:method :get) ()
+  '(200 () ("Hello World!!")))
+
+(define-handler hello-name (:method :get) (route-parameters)
+  (list 200 () (list (format nil "Hello, Your name is: ~A" (cdr (assoc :name route-parameters))))))
+
+(define-handler-set form-test
+  ((:method :get) (query-parameters)
+   (list 200 ()
+         (list (if query-parameters
+                   (format nil "<p>query-parameters: ~A</p>" query-parameters))
+               "
+<form method=POST>
+  <label for=\"fname\">First name:</label><br>
+  <input type=\"text\" id=\"fname\" name=\"fname\"><br>
+  <label for=\"lname\">Last name:</label><br>
+  <input type=\"text\" id=\"lname\" name=\"lname\">
+  <input type=\"submit\" value=\"Submit\">
+</form>")))
+  ((:method :post) (body-parameters)
+   (list 200 nil (list (format nil "Request body: ~A" body-parameters)))))
+
+(define-app main ()
+  (:uri "/" 'index)
+  (:uri "/hello/:name" 'hello-name)
+  (:uri "/form" 'form-test))
+
+;(clackup #'main)
+#+end_src
+
+** Documentation
+
+See [[file:docs/index.org][docs]].  
+
+** Running Tests
+
+=nite= uses [[https://shinmera.github.io/parachute/][Parachute]] for it's unit-testing. To run the tests simply run:
+
+#+begin_src common-lisp
+(asdf:test-system '#:nite)
+#+end_src
+
+Or manually
+
+#+begin_src common-lisp
+(ql:quickload #:nite/test)
+(parachute:test 'nite.test)
+#+end_src
+
+** Work Log.
+
+| Date               | Contributor | Description                     | Effort(in hours) |
+|--------------------+-------------+---------------------------------+------------------|
+| <2023-02-23 Thu> | lispegistus | Initial effort for 0.1.0 [fn:1] |              140 |
+|                    |             | Total                           |              140 |
+#+TBLFM: @>$4=vsum(@2..@-1) 
+
+[fn:1] I've worked on this project on and off since 2021, I've redesigned it several times and the number of hours specified is only the hours I have at least some notes about since I restarted this project a few weeks ago. The number is likely higher
+
+** About the Author
+
+My name is Pavel Penev aka Lispegistus.
+
+My code and writings is collected at [[https://strangestack.com]]. See the [[https://strangestack.com/about.html][About]] page for more.
+
+** License
+
+Licensed under the GPL-3.0 license. See file LICENSE.txt for the full text of the license.
