@@ -33,6 +33,7 @@
    #:param-parser-condition
    #:register-param-parser
    #:parse-string-template
+   #:unparse-string-template
    #:concatenate-string-template
    ;; Router classes
    #:router
@@ -50,7 +51,8 @@
    #:merge-routers
    #:router-add-subrouter
    ;; Router API
-   #:find-route))
+   #:find-route
+   #:walk-router))
 
 (in-package #:nite.router)
 
@@ -120,6 +122,13 @@ Example:
           (if (str:starts-with-p ":" component)
               (collect (parse-param-capture component))
               (collect component)))))
+
+(defun unparse-string-template (list-template)
+  "Generate a string template from a parsed list template"
+  (str:join "/" (iter (for path-component in list-template)
+                      (collect (if (stringp path-component)
+                                   path-component
+                                   (apply 'format nil ":~A|~A" path-component))))))
 
 (defun concatenate-string-template (prefix template)
   "Concatenate two template strings while keeping slashes consistent"
@@ -315,3 +324,12 @@ Returns two values, the route object and an alist of variable capture params."
     (find-route-internal router (if (stringp uri)
                                     (parse-string-template uri)
                                     uri))))
+
+(defun walk-router (router path function)
+  (iter (for (child-path-component child) in-hashtable (router-children router))
+        (let* ((child-path (concatenate 'list path (if (stringp child-path-component)
+                                                       (list child-path-component)
+                                                       (list (list (router-param-name child)
+                                                                   child-path-component))))))
+          (funcall function child-path child)
+          (walk-router child child-path function))))

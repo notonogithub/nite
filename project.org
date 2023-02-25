@@ -1,0 +1,71 @@
+#+TITLE: Nite Project Management
+#+TODO: TODO ACTIVE | DONE
+#+TODO: BUG(b) INVESTIGATING(i) | FIXED(e) WONTFIX(w)
+#+TODO: FEATURE(f) RESEARCHING(r) TESTING(t) DOCUMENTING(d) | MERGED(m) CANCELLED(c) BLOCKED(o)
+#+TODO: RELEASE(l) NEXT(n) | PUBLISHED(p)
+#+TODO: BUGFIX(u) | PUBLISHED(s)
+
+* Workflow
+
+The organization of tasks in this file is as follows:
+ - Backlog is the list of all planned features, tasks and open bugs.
+ - =RELEASE= workflow is as follows:
+   1) Create a new release and mark it as state =RELEASE=.
+   2) Move tasks from the backlog to the release heading.
+   3) When work is started on a release it is moved to the =NEXT= state.
+   4) A release branch is created off of =main=. The branch is named after the next version.
+   5) When all tasks are completed the branch is merged into main, a release announcement is published and the state of the release is moved to =PUBLISHED=.
+ - =BUGFIX= releases are critical releases that take priority. Most bugs will not be critical, but some, such as security bugs might be. The workflow is the same as a regular release, except only the minor version is being bumped.
+ - =TODO= are miscellaneous tasks that are too minor to be part of the main workflow. A task that is being currently worked on is marked ACTIVE.
+ - =FEATURE= have the following workflow:
+   1) Create a feature branch off of the release branch.
+   2) Mark the feature task with the =RESEARCHING= state and implement feature.
+   3) Mark the feature task with the =TESTING= state and verify that it works as expected and has proper tests. 
+   4) Mark the feature task with the =DOCUMENTING= state and checking all relevant docstrings and edit or create all relevant documentation files. 
+   5) Merge the feature branch in the release branch.
+   6) Mark the feature task with the =MERGED= state.
+   7) If it is discovered that a feature is blocked and cannot be completed in the current release:
+      1. Document the blockage. This could be due to a serious bug, or requiring a feature that is not yet implemented or it could be an issue with a dependency. A feature could also be blocked because a reasonable way to implement it is not found and more research is needed.
+      2. Mark the feature task with the =BLOCKED= states.
+      3. Create any new tasks if necessary and note them in the feature heading.
+      4. Move the feature task back to the backlog.
+   8) If in the course of implementing the feature it is discovered that the feature cannot be reasonably implemented or that the feature is not desirable, it is marked with the =CANCELLED= state.
+
+
+* Releases
+** RELEASE 0.2.0
+*** TODO Fix main branch
+*** TODO Backlog grooming
+*** FEATURE Router refactoring
+
+    The router code is undoubtedly the most complicated part of Nite at the moment and while the general concept is sound, the implementation still feels a bit brittle and hard to extend, and we'll need a lot from it.
+
+
+** Backlog
+
+*** FEATURE Parameter capture should include a wildcard type.
+
+    Implementing a wildcard type that captures the entire rest of the URI will be useful. We'll have to figure out how to detect incompatible parameter capture siblings since we currently depend on order of defined parameter parsers, but a whildcard and a string parameter capture would be incompatible in the same group.
+
+*** FEATURE Handler conditions
+
+    Handlers predicate system should raise a condition when they cannot handle the request instead of returning nil.
+
+*** FEATURE   Route tags should be unique
+
+    Currently as we traverse the route tree if we encounter the same route tag we only take the first into the route map. Perhaps issue a warning?
+
+*** FEATURE Research possible module system based on routers.
+
+    A module is an object that has the following properties:
+  - A collection of related handlers
+  - A module can be "mounted", that is included in the route tree. 
+  - the mount operation should emit a router object that can be included in the route map
+  - the mount operation should be able to prefix all route tags with a prefix to make sure they're unique
+  - the mount operation should be able to configure all child routes and handlers a certain way.
+  - modules should be nestable. A module made of other modules.
+  - Most likely this should be implemented as an app class.
+
+*** FEATURE Middleware
+
+    While it is perfectly possible to use Lack and Clack middlewares, many of them do not appear to be as thoroughly documented as they could be, configuring them and using =lack:builder= seems cumbersome and they are impossible to extend. In general, using Lack is not advisable for Nite applications, we use Clack as a simple HTTP library and server abstraction only. As such a Nite specific middleware protocol should be implemented. Preferably backwards compatible with clack's approach.

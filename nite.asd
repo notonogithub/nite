@@ -24,18 +24,28 @@
   :version "0.1.0"
   :serial t
   :depends-on (#:alexandria
+               #:serapeum
                #:iterate
                #:metabang-bind
                #:str
+               #:quri
+               #:com.inuoe.jzon
+               #:shasht
+               #:cl-ppcre
+               #:rfc2388
+               #:flexi-streams
                #:media-types
                #:clack
-               #:lack
-               #:lack-request
                #:closer-mop)
   :pathname "src"
-  :components ((:file "handler")
-               (:file "router")
-               (:file "app"))
+  :components ((:module "core"
+                :serial t
+                :components ((:file "request")
+                             (:file "response")
+                             (:file "handler")
+                             (:file "router")
+                             (:file "app")
+                             (:file "nite"))))
   :in-order-to ((asdf:test-op (asdf:test-op :nite/test))))
 
 (asdf:defsystem #:nite/test
@@ -48,7 +58,11 @@
                #:parachute)
   :pathname "test"
   :components ((:file "nite-test") ;; Main entry point for running all test cases.
-               (:file "handler")
-               (:file "router")
-               (:file "app"))
+               (:module "core"
+                :serial t
+                :components ((:file "request")
+                             (:file "response")
+                             (:file "handler")
+                             (:file "router")
+                             (:file "app"))))
   :perform (asdf:test-op (op c) (uiop:symbol-call :parachute :test :nite.test)))

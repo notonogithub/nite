@@ -1,4 +1,4 @@
-;;;;    app.lisp
+;;;;    auth.lisp
 ;;;;
 ;;;;    This file is part of Nite
 ;;;;    Author: Pavel Penev (Lispegistus) <lispegistus@strangestack.com>
@@ -17,23 +17,26 @@
 ;;;;    You should have received a copy of the GNU General Public License
 ;;;;    along with Nite. If not, see <http://www.gnu.org/licenses/>.
 
-(defpackage #:nite.test.app
-  (:use #:cl
-        #:nite.app
-        #:parachute)
-  (:import-from #:bind #:bind)
+(defpackage #:nite
+  (:import-from #:nite.handler
+                #:define-handler
+                #:define-handler-set)
+  (:import-from #:nite.app
+                #:define-app
+                #:with-app
+                #:find-route-uri
+                #:app
+                #:*app*
+                #:*request*
+                #:*debug*)
   (:export
-   #:test-find-route-uri-by-tag))
+   #:define-handler
+   #:define-handler-set
+   #:define-app
+   #:with-app
+   #:find-route-uri
+   #:app
+   #:*app*
+   #:*request*
+   #:*debug*))
 
-(in-package #:nite.test.app)
-
-(define-test test-find-route-uri-by-tag
-  :parent 'nite.test:nite-test
-  (define-app test1 ()
-    (:uri "/hello/world" :hello-route :hello-route-tag))
-  (is string= (find-route-uri :hello-route-tag :app #'test1) "/hello/world")
-  (define-app test2 ()
-    (:uri "/hello/:name/:id|integer" :hello-route :hello-route-tag))
-  (is string= (find-route-uri :hello-route-tag :app #'test2 :params '(:id 11 :name "world")) "/hello/world/11")
-  (let ((*app* #'test2))
-    (is string= (find-route-uri :hello-route-tag :params '(:id 11 :name "world")) "/hello/world/11")))

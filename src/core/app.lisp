@@ -31,19 +31,17 @@
                 #:router-param-name
                 #:router-add-route-handler
                 #:router-add-subrouter
+                #:unparse-string-template
+                #:walk-router
                 #:find-route)
   (:import-from #:closer-mop
                 #:funcallable-standard-class
                 #:funcallable-standard-object
                 #:set-funcallable-instance-function)
-  (:import-from #:lack.component
-                #:call
-                #:lack-component
-                #:to-app)
-  (:import-from #:lack.request
-                #:make-request
-                #:request-env
-                #:request-path-info)
+  (:import-from #:nite.request
+                #:make-request)
+  (:import-from #:nite.response
+                #:not-found)
   (:export
    #:define-app
    #:with-app
@@ -59,7 +57,7 @@
 (defparameter *app* nil "Current active app")
 (defparameter *debug* nil "Global debug flag.")
 
-(defclass app (funcallable-standard-object lack-component router)
+(defclass app (funcallable-standard-object router)
   ((name :accessor app-name
          :initarg :name
          :type symbol
@@ -78,45 +76,34 @@
 (defmethod initialize-instance :after ((app app) &key)
   (set-funcallable-instance-function
    app
-   (to-app app)))
-
-(defmethod call ((app app) env)
-  (bind ((*request* (make-request env))
-         (*app* app)
-         ((:values route-handler route-parameters) (find-route app (getf env :path-info))))
-    (if route-handler
-        (progn
-          (setf (getf (request-env *request*) :route-parameters)
-                route-parameters)
-          (or (funcall route-handler *request*)
-              '(404 () ("Not Found"))))
-        '(404 () ("Not Found")))))
+   (lambda (env)
+     (bind ((*app* app)
+            ((:values route-handler route-parameters) (find-route app (getf env :path-info)))
+            (*request* (make-request env :route-parameters route-parameters)))
+       (if route-handler
+           (or (funcall route-handler *request*)
+               (not-found)) ;; Eventually handlers should use the condition system to report HTTP errors instead of returning nil.
+           (not-found :uri (getf env :path-info)))))))
 
 (defun rebuild-route-map (app)
   "Rebuild an app's reverse lookup maps."
+  ;; Clear the route maps
   (setf (app-route-tag-map app) (make-hash-table))
   (setf (app-route-map app) (make-hash-table))
-  (bind (((:labels walk-router (router app path))
-          (iter (for (child-path-component child) in-hashtable (router-children router))
-                (let* ((new-path (concatenate 'list path (if (stringp child-path-component)
-                                                             (list child-path-component)
-                                                             (list (list (router-param-name child)
-                                                                         child-path-component)))))
-                       (string-path (str:join "/" (iter (for path-component in new-path)
-                                                        (collect (if (stringp path-component)
-                                                                     path-component
-                                                                     (apply 'format nil ":~A|~A" path-component))))))
-                       (route-tag (router-route-tag child))
-                       (route (router-route-handler child)))
-                  (when (and route-tag (not (member route-tag (hash-table-keys (app-route-tag-map app)))))
-                    (setf (gethash (router-route-tag child) (app-route-tag-map app))
-                          new-path))
-                  (when route
-                    (setf (gethash string-path (app-route-map app)) (if route-tag
-                                                                        (list route route-tag)
-                                                                        route)))
-                  (walk-router child app new-path)))))
-    (walk-router app app (list ""))))
+  ;; walk-router visits every child, we check if the child has a route assosiated with it and put it in the maps.
+  (walk-router
+   app
+   (list "")
+   (lambda (path child)
+     (let ((string-path (unparse-string-template path))
+           (route-tag (router-route-tag child))
+           (route-handler (router-route-handler child)))
+       (when (and route-tag (not (member route-tag (hash-table-keys (app-route-tag-map app)))))
+         (setf (gethash (router-route-tag child) (app-route-tag-map app)) path))
+       (when route-handler
+         (setf (gethash string-path (app-route-map app)) (if route-tag
+                                                             (list route-handler route-tag)
+                                                             route-handler)))))))
 
 (defun find-route-uri (route-tag &key (app *app*) (params nil))
   "Attempt to find a uri that will match a given route in app given a route-tag.
@@ -153,7 +140,7 @@ Body clauses must be of the form:
 Returns the new router"
   (let ((app-gensym (gensym "APP")))
     `(let ((,app-gensym (make-instance ',app-class :name ',name)))
-       (setf (symbol-function ',name)
+       (setf (fdefinition ',name)
              ,app-gensym)
        (with-app ,app-gensym
          ,@body))))

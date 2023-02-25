@@ -27,11 +27,8 @@
                 #:set-funcallable-instance-function)
   (:import-from #:media-types
                 #:media-subtypep)
-  (:import-from #:lack.request
-                #:request-method
-                #:request-content-type
-                #:request-accepts-p
-                #:request-env)
+  (:import-from #:nite.request
+                #:request-accepts-p)
   (:export
    #:define-handler
    #:define-handler-set
@@ -58,10 +55,10 @@ In order for the request-predicate to return true, all additional-predicate func
 "
   (lambda (request)
     (and (if method
-             (equal method (request-method request))
+             (equal method (getf request :request-method))
              t)
          (if content-type
-             (media-subtypep content-type (request-content-type request))
+             (media-subtypep content-type (getf request :content-type))
              t)
          (if accepted-type
              (request-accepts-p request accepted-type)
@@ -90,7 +87,7 @@ request and returns a valid response. Returns nil otherwise.")
    handler
    (lambda (request)
      (when (funcall (handler-predicate handler) request)
-       (apply (handler-function handler) (request-env request))))))
+       (apply (handler-function handler) request)))))
 
 (defclass handler-set (funcallable-standard-object)
   ((handlers :accessor handler-set-handlers
@@ -116,7 +113,7 @@ request and returns a valid response. Returns nil otherwise.")
    (lambda (request)
      (let ((handler (find-matching-handler handler-set request)))
        (when handler
-         (apply (handler-function handler) (request-env request)))))))
+         (apply (handler-function handler) request))))))
 
 (defmacro define-handler (name
                           (&rest predicate-args)
@@ -128,7 +125,7 @@ args should be valid keys in the request environment."
   (bind ((documentation (if (stringp (car body)) (car body) nil))
          (new-body (if (stringp (car body)) (cdr body) body)))
     `(progn
-       (setf (symbol-function ',name)
+       (setf (fdefinition ',name)
              (make-instance 'handler
                             :predicate (make-request-predicate ,@predicate-args)
                             :handler-function (lambda (&key ,@args &allow-other-keys)
@@ -143,16 +140,16 @@ handler-definitions have the following form: ((predicate-args) (args) &body) sim
   (bind ((documentation (if (stringp (car handler-definitions)) (car handler-definitions) nil))
          (definitions (if (stringp (car handler-definitions)) (cdr handler-definitions) handler-definitions)))
     `(progn
-       (setf (symbol-function ',name)
+       (setf (fdefinition ',name)
              (make-instance 'handler-set))
        ,@(iter (for (predicate-args args . handler-body) in definitions)
                (collect `(push (make-instance 'handler
                                               :predicate (make-request-predicate ,@predicate-args)
                                               :handler-function (lambda (&key ,@args &allow-other-keys)
                                                                   ,@handler-body))
-                               (handler-set-handlers (symbol-function ',name)))))
+                               (handler-set-handlers (fdefinition ',name)))))
        ;; We want the handlers to be in the order the were defined in.
-       (setf (handler-set-handlers (symbol-function ',name))
-             (nreverse (handler-set-handlers (symbol-function ',name))))
+       (setf (handler-set-handlers (fdefinition ',name))
+             (nreverse (handler-set-handlers (fdefinition ',name))))
        ,(when documentation
           `(setf (documentation ',name 'function) ,documentation)))))

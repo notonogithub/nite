@@ -23,7 +23,7 @@
         #:nite.handler
         #:parachute)
   (:import-from #:bind #:bind)
-  (:import-from #:lack.request
+  (:import-from #:nite.request
                 #:make-request)
   (:export
    #:test-handler
@@ -87,6 +87,6 @@
        (list 200 nil (list (format nil "~A" query-parameters)))))
     (is equal '(200 nil ("hello"))
         (funcall 'form get-request))
-    (is equal '(200 nil ("((hello . world) (foo . bar))"))
+    (is equal '(200 nil ("(hello world foo bar)"))
         (funcall 'form post-request))))
 
