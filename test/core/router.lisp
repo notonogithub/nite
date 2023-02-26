@@ -24,35 +24,18 @@
         #:parachute)
   (:import-from #:bind #:bind)
   (:export
-   #:test-param-parser
    #:test-parse-string-template
+   #:test-unparse-string-template
    #:test-concatenate-string-template
-   #:test-router-set/get-child
-   #:test-router-add-route-handler
-   #:test-match-child
-   #:test-find-route
-   #:test-merge-routers
-   #:test-router-add-subrouter
-   #:test-merge-different-routers))
+   #:test-parameter-capture
+   #:test-node-add-route-handler
+   #:test-find-path
+   #:test-merge-node-at-path
+   #:test-find-route-uri
+   #:test-mount
+   #:test-pretty))
 
 (in-package #:nite.test.router)
-
-(define-test test-param-parser
-  :parent 'nite.test:nite-test
-  (true (assoc :string *param-parsers*))
-  (true (assoc :integer *param-parsers*))
-  (bind (((_ . parser) (assoc :string *param-parsers*)))
-    (is eq (param-parser-type parser) :string)
-    (is eq (param-parser-parse-function parser) 'identity)
-    (true (funcall (param-parser-condition parser) "foo"))
-    (false (funcall (param-parser-condition parser) "")))
-  (bind (((_ . parser) (assoc :integer *param-parsers*)))
-    (is eq (param-parser-type parser) :integer)
-    (is eq (param-parser-parse-function parser) 'parse-integer)
-    (true (funcall (param-parser-condition parser) "11"))
-    (false (funcall (param-parser-condition parser) "foo"))
-    (false (funcall (param-parser-condition parser) "11a"))
-    (false (funcall (param-parser-condition parser) "11.1"))))
 
 (define-test test-parse-string-template
   :parent 'nite.test:nite-test
@@ -60,8 +43,23 @@
                     (list "" "hello" "world")
                     :test 'equal))
   (true (tree-equal (parse-string-template "/hello/:name|string/:id|integer")
-                    (list "" "hello" (list :name :string) (list :id :integer))
+                    (list "" "hello" (cons :name :string) (cons :id :integer))
+                    :test 'equal))
+  (true (tree-equal (parse-string-template "/hello/*")
+                    (list "" "hello" (cons :* :wild))
                     :test 'equal)))
+
+(define-test test-unparse-string-template
+  :parent 'nite.test:nite-test
+  (is equal
+      "/hello/world"
+      (unparse-string-template (list "" "hello" "world")))
+  (is equal
+      "/hello/:NAME|STRING/:ID|INTEGER"
+      (unparse-string-template (list "" "hello" (cons :name :string) (cons :id :integer))))
+  (is equal
+      "/hello/*"
+      (unparse-string-template (list "" "hello" (cons :* :wild)))))
 
 (define-test test-concatenate-string-template
   :parent 'nite.test:nite-test
@@ -76,126 +74,131 @@
   (is string= (concatenate-string-template "/" "/hello/") "/hello/")
   (is string= (concatenate-string-template "/" "hello/") "/hello/"))
 
-(define-test test-router-set/get-child
+(define-test test-parameter-capture
   :parent 'nite.test:nite-test
-  (bind ((router (make-instance 'router))
-         (child (make-instance 'router)))
-    (router-set-child router "hello" child)
-    (is eq (router-get-child router "hello") child))
-  (bind ((router (make-instance 'router))
-         (child (make-instance 'param-router)))
-    (router-set-child router :string child)
-    (is eq (router-get-child router (list :hello :string)) child))
-  (bind ((router (make-instance 'router))
-         (child (make-instance 'param-router)))
-    (router-set-child router (list :hello :string) child)
-    (is eq (router-get-child router (list :hello :string)) child))
-  (bind ((router (make-instance 'router))
-         (child (router-get-child router "hello" :ensure t)))
-    (is eq (router-get-child router "hello") child))
-  (bind ((router (make-instance 'router))
-         (child (router-get-child router (list :hello :string) :ensure t)))
-    (is eq (router-get-child router (list :hello :string)) child)))
+  (let ((integer-child (make-instance 'node :path-component (cons :id :integer)))
+        (string-child (make-instance 'node :path-component (cons :name :string)))
+        (wild-child (make-instance 'node :path-component (cons :* :wild))))
+    (let ((node (make-instance 'node)))
+      (setf (gethash :integer (node-children node)) integer-child)
+      (setf (gethash :string (node-children node)) string-child)
+      (true (param-capture-children-p node))
+      (false (param-capture-children-p (make-instance 'node)))
+      (multiple-value-bind (child params)
+          (param-capture node "foo")
+        (is eq string-child child)
+        (is equal (cons :name "foo") params))
+      (multiple-value-bind (child params)
+          (param-capture node "11")
+        (is eq integer-child child)
+        (is equal (cons :id 11) params)))
+    (let ((node (make-instance 'node)))
+      (setf (gethash :wild (node-children node)) wild-child)
+      (multiple-value-bind (child params)
+          (param-capture node "whatever" '("foo" "bar"))
+        (is eq wild-child child)
+        (is equal (cons :* "whatever/foo/bar") params)))))
 
-(define-test test-router-add-route-handler
+(define-test test-node-add-route-handler
   :parent 'nite.test:nite-test
-  (bind ((router (make-instance 'router)))
-    (router-add-route-handler router "/hello" :hello-route :hello-route-tag)
-    (bind ((child (router-get-child router "hello")))
-      (is equal (router-route-handler child) :hello-route)
-      (is equal (router-route-tag child) :hello-route-tag)))
-  (bind ((router (make-instance 'router)))
-    (router-add-route-handler router "/hello/world" :hello-route :hello-route-tag)
-    (bind ((child (router-get-child (router-get-child router "hello") "world")))
-      (is equal (router-route-handler child) :hello-route)
-      (is equal (router-route-tag child) :hello-route-tag)))
-  (bind ((router (make-instance 'router)))
-    (router-add-route-handler router "/:hello" :hello-route :hello-route-tag)
-    (bind ((child (router-get-child router (list :hello :string))))
-      (is equal (router-route-handler child) :hello-route)
-      (is equal (router-route-tag child) :hello-route-tag)))
-  (bind ((router (make-instance 'router)))
-    (router-add-route-handler router "/hello/:world" :hello-route :hello-route-tag)
-    (bind ((child (router-get-child (router-get-child router "hello") (list :world :string))))
-      (is equal (router-route-handler child) :hello-route)
-      (is equal (router-route-tag child) :hello-route-tag))))
+  (bind ((node (make-instance 'node :path-component "")))
+    (add-route-at-path node "/hello" 'hello-route :hello-route)
+    (is equal
+        (cons 'hello-route :hello-route)
+        (node-route (gethash "hello" (node-children node)))))
+  (bind ((node (make-instance 'node :path-component "")))
+    (add-route-at-path node "/hello/world" 'hello-route :hello-route)
+    (is equal
+        (cons 'hello-route :hello-route)
+        (node-route
+         (gethash "world"
+                  (node-children
+                   (gethash "hello" (node-children node)))))))
+  (bind ((node (make-instance 'node :path-component "")))
+    (add-route-at-path node "/:hello" 'hello-route :hello-route)
+    (is equal
+        (cons 'hello-route :hello-route)
+        (node-route (gethash :string (node-children node)))))
+  (bind ((node (make-instance 'node :path-component "")))
+    (add-route-at-path node "/hello/:world" 'hello-route :hello-route)
+    (is equal
+        (cons 'hello-route :hello-route)
+        (node-route
+         (gethash :string
+                  (node-children
+                   (gethash "hello" (node-children node))))))))
 
-(define-test test-find-route
+(define-test test-find-path
   :parent 'nite.test:nite-test
-  (bind ((router (make-instance 'router)))
-    (router-add-route-handler router "/hello/:name/:id|integer" :hello-route)
-    (bind (((:values route bindings) (find-route router "/hello/myname/11")))
-      (is equal route :hello-route)
+  (bind ((node (make-instance 'node :path-component "")))
+    (add-route-at-path node "/" 'index :index)
+    (bind (((:values route bindings) (find-path node "/")))
+      (is equal route 'index)
+      (false bindings)))
+  (bind ((node (make-instance 'node :path-component "")))
+    (add-route-at-path node "/hello/:name/:id|integer" 'hello-route :hello-route)
+    (bind (((:values route bindings) (find-path node "/hello/myname/11")))
+      (is equal route 'hello-route)
       (true (tree-equal bindings '((:id . 11) (:name . "myname")) :test 'equal)))))
 
-
-;; This will need more testing.
-
-(define-test test-merge-routers
+(define-test test-merge-node-at-path
   :parent 'nite.test:nite-test
-  (bind ((router1 (make-instance 'router))
-         (router2 (make-instance 'router)))
-    (router-add-route-handler router1 "common" :route1 :route-tag1)
-    (router-add-route-handler router1 "unique-to-router1" :route-unique-to-router1 :route-tag-unique-to-router1)
-    (router-add-route-handler router2 "common" :route2 :route-tag2)
-    (router-add-route-handler router2 "unique-to-router2" :route-unique-to-router2 :route-tag-unique-to-router2)
-    (bind ((merged-router (merge-routers router1 router2))
-           (common (router-get-child merged-router "common"))
-           (unique-to-router1 (router-get-child merged-router "unique-to-router1"))
-           (unique-to-router2 (router-get-child merged-router "unique-to-router2")))
-      (is equal (router-route-handler common) :route2)
-      (is equal (router-route-tag common) :route-tag2)
-      (is equal (router-route-handler unique-to-router1) :route-unique-to-router1)
-      (is equal (router-route-tag unique-to-router1) :route-tag-unique-to-router1)
-      (is equal (router-route-handler unique-to-router2) :route-unique-to-router2)
-      (is equal (router-route-tag unique-to-router2) :route-tag-unique-to-router2))))
+  (bind ((root (make-instance 'node :path-component ""))
+         (child (make-instance 'node :path-component "")))
+    (add-route-at-path child "/world" 'hello-route :hello-route)
+    (merge-node-at-path root "/hello" child)
+    (is equal
+        (cons 'hello-route :hello-route)
+        (node-route
+         (gethash "world"
+                  (node-children
+                   (gethash "hello" (node-children root))))))
+    (is equal
+        "world"
+        (node-path-component
+         (gethash "world"
+                  (node-children
+                   (gethash "hello" (node-children root))))))))
 
-(define-test test-merge-different-routers
+;; Router
+
+(define-test test-find-route-uri
   :parent 'nite.test:nite-test
-  (bind ((router1 (make-instance 'param-router :param-name :name))
-         (router2 (make-instance 'router)))
-    (router-add-route-handler router1 "common" :route1 :route-tag1)
-    (router-add-route-handler router1 "unique-to-router1" :route-unique-to-router1 :route-tag-unique-to-router1)
-    (router-add-route-handler router2 "common" :route2 :route-tag2)
-    (router-add-route-handler router2 "unique-to-router2" :route-unique-to-router2 :route-tag-unique-to-router2)
-    (bind ((merged-router (merge-routers router1 router2))
-           (common (router-get-child merged-router "common"))
-           (unique-to-router1 (router-get-child merged-router "unique-to-router1"))
-           (unique-to-router2 (router-get-child merged-router "unique-to-router2")))
-      (is equal (type-of merged-router) 'param-router)
-      (is equal (router-param-name merged-router) :name)
-      (is equal (router-route-handler common) :route2)
-      (is equal (router-route-tag common) :route-tag2)
-      (is equal (router-route-handler unique-to-router1) :route-unique-to-router1)
-      (is equal (router-route-tag unique-to-router1) :route-tag-unique-to-router1)
-      (is equal (router-route-handler unique-to-router2) :route-unique-to-router2)
-      (is equal (router-route-tag unique-to-router2) :route-tag-unique-to-router2)))
-  ;; opposite case
-  (bind ((router1 (make-instance 'router))
-         (router2 (make-instance 'param-router :param-name :name)))
-    (router-add-route-handler router1 "common" :route1 :route-tag1)
-    (router-add-route-handler router1 "unique-to-router1" :route-unique-to-router1 :route-tag-unique-to-router1)
-    (router-add-route-handler router2 "common" :route2 :route-tag2)
-    (router-add-route-handler router2 "unique-to-router2" :route-unique-to-router2 :route-tag-unique-to-router2)
-    (bind ((merged-router (merge-routers router1 router2))
-           (common (router-get-child merged-router "common"))
-           (unique-to-router1 (router-get-child merged-router "unique-to-router1"))
-           (unique-to-router2 (router-get-child merged-router "unique-to-router2")))
-      (is equal (type-of merged-router) 'param-router)
-      (is equal (router-param-name merged-router) :name)
-      (is equal (router-route-handler common) :route2)
-      (is equal (router-route-tag common) :route-tag2)
-      (is equal (router-route-handler unique-to-router1) :route-unique-to-router1)
-      (is equal (router-route-tag unique-to-router1) :route-tag-unique-to-router1)
-      (is equal (router-route-handler unique-to-router2) :route-unique-to-router2)
-      (is equal (router-route-tag unique-to-router2) :route-tag-unique-to-router2))))
+  (let ((router (make-instance 'router)))
+    (connect router "/hello" 'hello :hello t)
+    (is equal
+        "/hello"
+        (find-route-uri :hello :router router))
+    (connect router "/hello/:name/:id|integer" 'hello :hello-params t)
+    (is equal
+        "/hello/bob/11"
+        (find-route-uri :hello-params :router router :params '(:name "bob" :id 11)))))
 
+(define-test test-mount
+  :parent 'nite.test:nite-test
+  (let ((router (make-instance 'router))
+        (child (make-instance 'router)))
+    (connect child "/hello" 'hello :hello t)
+    (connect child "/hello/:name/:id|integer" 'hello :hello-params t)
+    (mount router "/blah" child "PREFIX-" t)
+    (is equal
+        "/blah/hello"
+        (find-route-uri :prefix-hello :router router))
+    (is equal
+        "/blah/hello/bob/11"
+        (find-route-uri :prefix-hello-params :router router :params '(:name "bob" :id 11)))))
 
-(define-test test-router-add-subrouter :parent 'nite.test:nite-test
-  (bind ((router (make-instance 'router))
-         (subrouter (make-instance 'router)))
-    (router-add-route-handler subrouter "world" :route1)
-    (router-add-subrouter router "hello" subrouter)
-    (bind ((child-in-router (router-get-child (router-get-child router "hello") "world"))
-           (child-in-subrouter (router-get-child subrouter "world")))
-      (is equal (router-route-handler child-in-router) (router-route-handler child-in-subrouter)))))
+(define-test test-pretty
+  :parent 'nite.test:nite-test
+  (let ((router (make-instance 'router)))
+    (connect router "/" 'index :index)
+    (connect router "/hello" 'hello :hello)
+    (connect router "/hello/world" 'hello :hello-world)
+    (connect router "/hello/bob" 'hello :hello-bob)
+    (rebuild-route-map router)
+    (is equal
+        '(("/" index :index)
+          ("/hello" hello :hello)
+          ("/hello/bob" hello :hello-bob)
+          ("/hello/world" hello :hello-world))
+        (route-map-pretty router))))

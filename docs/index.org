@@ -26,12 +26,7 @@ Current semantic version: 0.1.0
 
 #+begin_src common-lisp
 (defpackage #:nite.example
-  (:use #:cl)
-  (:import-from #:nite.handler
-                #:define-handler
-                #:define-handler-set)
-  (:import-from #:nite.app
-                #:define-app)
+  (:use #:cl #:nite)
   (:import-from #:clack
                 #:clackup))
 
@@ -148,13 +143,13 @@ Route handlers are mapped to URIs by =app= objects. An app is also such a funcal
 
 Take note that we are defining the mapping between URI's and symbols naming our handlers, this makes it possible to redefine the handlers while the app is running. Each clause in the body of =define-app= can take 2 forms:
 
-=(:uri template route-handler &optional (route-tag nil))=
+=(:uri template route-handler &optional (route-name nil))=
 
 or
 
 =(:router template subrouter)=
 
-We'll discus templates a bit more later, for now, think of it as a string that specifies a URI or a set of related URIs with a similar structure. The =route-handler= is of course a function designator and the route-tag is a keyword that can optionally be added to uniquely identify the route for reverse lookup, so we can redirect the user or generate a URL without having to hard code it. This allows us to have a lot of flexibility in how we structure our APIs.
+We'll discus templates a bit more later, for now, think of it as a string that specifies a URI or a set of related URIs with a similar structure. The =route-handler= is of course a function designator and the route-name is a keyword that can optionally be added to uniquely identify the route for reverse lookup, so we can redirect the user or generate a URL without having to hard code it. This allows us to have a lot of flexibility in how we structure our APIs.
 
 Finally, we can add entire sub-routers in the route map. Since an app is itself a kind of router, we can have multiple apps in our project and arrange them in a single tree and even reuse apps in multiple points in the route map.
 
@@ -171,7 +166,7 @@ In order to add more routes to an already existing app, we can use the =with-app
 
 There is also of course the low-level router api defined in the =nite.router= package, but you usually won't have to use it directly.
 
-Finally we can just start our app with =(clackup #'app)= as if it were any ordinary clack app function. Internally it does a few more things, first it binds the special variable =*request*= to an instance of the =lack.request:request= structure. It also binds the =*app*= variable to itself. It also adds the =:route-parameters= property to the request =env= slot, so we can access it from our rout handler bodies. We'll talk about route parameters in the template section next. Finally if no route is found or none of the route handlers can handle the request, it returns a not found response.
+Finally we can just start our app with =(clackup #'app)= as if it were any ordinary clack app function. Internally it does a few more things, first it binds the special variable =*request*= to an instance of the =lack.request:request= structure. It also binds the =*router*= variable to itself. It also adds the =:route-parameters= property to the request =env= slot, so we can access it from our rout handler bodies. We'll talk about route parameters in the template section next. Finally if no route is found or none of the route handlers can handle the request, it returns a not found response.
 
 * Templates
 
@@ -184,17 +179,20 @@ Templates in nite are a string of path components separated by forward slashes. 
 ("" "hello" "world")
 #+end_src
 
-The function =nite.router:parse-string-template= will turn a string template into a valid list of path components. There is no function to turn a list of path components into a string template, since they are meant for internal use only and the user is not expected to work with them directly, but the function =nite.router:concatenate-string-template= can be used to concatenate two string templates and do the "correct" thing with slashes.
+The function =nite.router:parse-string-template= will turn a string template into a valid list of path components.
+The function =nite.router:unparse-string-template= will do the reverse. The function =nite.router:concatenate-string-template= can be used to concatenate two string templates and do the "correct" thing with slashes.
 
 *NOTE: It is important to note that Nite treats URIs with ending slashes as different from ones without. For example ="/hello"= and ="/hello/"= specify different routes. How ending slashes are handled might become configurable in future versions if I find a clever design I like.*
 
 ** Parameter capture
 
-Nite supports basic parameter capture as commonly found in routing libraries. We saw that these captured parameters are made available in the request environment under the key =:route-parameters=. For example the template ="/user/:name"= defines a parameter capture called =:name= any URI component will match it and be bound internally to the keyword =:name=. The method =nite.router:find-route= will return the alist with captured parameters as a second value. This gives a great deal of flexibility when defining routes. A parameter capture component can optionally have a type. Currently only =:string= and =:integer= types are supported, but the system is extensible and new types of parameter capture parsers can be defined. The full syntax for a parameter capture path component is =:<name>|<type>= Where the type is optional and defaults to =:string=. Let's look at an example template:
+Nite supports basic parameter capture as commonly found in routing libraries. We saw that these captured parameters are made available in the request environment under the key =:route-parameters=. For example the template ="/user/:name"= defines a parameter capture called =:name= any URI component will match it and be bound internally to the keyword =:name=. The method =nite.router:find-route= will return the alist with captured parameters as a second value. This gives a great deal of flexibility when defining routes. A parameter capture component can optionally have a type. Currently only =:string= and =:integer= types are supported. The full syntax for a parameter capture path component is =:<name>|<type>= Where the type is optional and defaults to =:string=. Let's look at an example template:
 
 ="/:user/:post_id|integer"= will match any URI like ="/bob/12"= and bind the string ="bob"= to the keyword =:user= and the integer =12= to the keyword =:post_id=. The URI ="/bob/foo"= on the other hand will not match since the string ="foo"= cannot be parsed as an integer.
 
 Internally a parameter path component is represented as a list of the form =(<name> <type>)=  where both the name and type are keywords. So the parsed form of ="/:user/:post_id|integer"= will be =("" (:user :string) (:post_id :integer))=.
+
+Finally, templates can include a wildcard component, denoted by =*=. This must always be at the end of your template, =*= will match everything after it in the URI. For example the template ="/foo/*"= will match the URI ="/foo/bar/baz"=, in the =:route-parameters= you will find the pair =(:* . "/bar/baz")=. The wildcard will not work if it has any string siblings, the templates ="/foo/:bar"= and ="/foo/*"= are in conflict and ="/foo/:bar"= will take priority.
 
 ** Reverse lookup
 
@@ -210,17 +208,17 @@ A route is is simply a mapping between a URI or a set of URIs in the case of cap
 Now we can look up the route tags in the app with the =nite.app:find-route-uri= function:
 
 #+begin_src common-lisp
-(find-route-uri :index :app #'main) ;; returns "/"
-(find-route-uri :form-test :app #'main) ;; returns "/form"
+(find-route-uri :index :router #'main) ;; returns "/"
+(find-route-uri :form-test :router #'main) ;; returns "/form"
 #+end_src
 
 For simple templates that's easy, but for template like ="/hello/:name" this is a bit more complicated. We have to explicitly supply what value to substitute in the template in order to get a valid URI:
 
 #+begin_src common-lisp
-(find-route-uri :hello-name :app #'main :params '(:name "bob")) ;; returns "/hello/bob"
+(find-route-uri :hello-name :router #'main :params '(:name "bob")) ;; returns "/hello/bob"
 #+end_src
 
-In the context of handler bodies, where the =*app*= variable is bound to the current app, we can omit the =:app= parameter:
+In the context of handler bodies, where the =*router*= variable is bound to the current app, we can omit the =:router= parameter:
 
 #+begin_src common-lisp
 (find-route-uri :index) ;; returns "/"
@@ -228,68 +226,19 @@ In the context of handler bodies, where the =*app*= variable is bound to the cur
 (find-route-uri :form-test) ;; returns "/form"
 #+end_src
 
-* Advanced topic 
-
 ** Routers
 
 The package =nite.router= defines our router objects and their protocol. This section doesn't document the entire protocol and is given as a general introduction. Usually you won't be creating routers manually and most of this section is not relevant for day to day web development, but is provided for additional context and in case you want to play around and extend things.
 
-A router is simply an object that represents some path component and contains a list of child routers representing the child path components, forming a tree mapping on the space of URIs our app knows about. 
+In addition to the tree of nodes representing our URI space, a router maintains a reverse lookup table. And also a table of routes that have been added to it, this table is for debugging purposes so you can see what routes are represented in the tree. You can get an alist of them sorted alphabetically with the =nite.router:route-map-pretty=. When you add connect a new route or mount a subrouter, you might have to run the function =nite.router:rebuild-route-map= in order to make the reverse lookup work correctly.
 
-The structure of a router means that searching for a route handler in a router is a problem of searching for a path in a tree, and defining a route is all about creating that path in the tree and assigning the route-handler to the last sub-router in the path. This gives us a lot of flexibility, for example we can define a router for a module in our application, and then simply mount that router as a subrouter somewhere in our app, which can serve as a root router for our application. A single route handler can also be associated with multiple route paths, and we can do variable capture if we want some path components to be something other than hardcoded strings.
+There are two functions that add a route to a router:
+ - =nite.router:connect (router uri handler &optional name rebuild)= connects a route handler, optionally with a reverse lookup name in the router at the specified uri template. The optional rebuild argument(default nil) will rebuild the route map after the route has been added.
+ - =nite.router:mount (router uri subrouter &optional prefix rebuild)= mounts a subrouter in the main router at the location of URI. This function can override existing routes. Also since it makes copies of everything, it's possible to mount the same subrouter at multiple locations with separate URIs. But since route names should be unique, we can give a prefix argument to augment all the routes in the subrouter. It should be a string, preferably uppercase, since route names are assumed to be keywords.
 
-Apart from =nite.app:app= there are two other router classes, the base is =nite.router:router= and a special subclass exists called =nite.router:param-router= which handles parameter capture.
+We already saw =find-route-uri=, another important function is =find-route (uri &key (router *router*)= which takes the URL we're matching and attempts to find the route in the router. You will likely not have to use this function directly. It returns two values, the route handler and a alist of captured parameters, or it returns nil if a route has not been found.
 
-Routes are searched in a router with the function =nite.router:find-route=, which takes a router and a URI string and returns two values, the first value is the route-handler or nil, and the second value is an alist of captured parameters or nil if none were on the path. Your app will already call this function for you when it handles a request.
-
-Of note are the functions =nite.router:router-add-route-handler= and =nite.route:add-subrouter=. These functions internally handle the =:uri= and =:router= clauses in =define-app= and =with-app=. You can use them to manually add routes and subrouters to your apps, but take note that you will have to call =nite.app::rebuild-route-map= manually to update the reverse lookup table.
-
-It's important to note the algorithm by which subrouters are added. Both functions will create new nodes in the router if they don't exist, but =add-subrouter= in particular will merge child nodes with a priority for the subrouter. The merge algorithm creates fresh routers of the appropriate type and then copies all children from the source and subrouters into the new node recursively. This allows you to override big parts of the route tree with a sub-router overriding any old values, but retaining any non-conflicting nodes.
-
-** Defining new parameter parsers
-
-Defining a new type of parameter parser is very simple. The function =nite.router:register-param-parser= takes 3 keyword arguments =type=, =parse-function= and =condition=. The type is a keyword naming the type, the parse function is a function of one argument that takes the matched path component as a string and transforms it in some way, and the condition is a function of one argument that takes the path component and returns a boolean value signifying if the parse function can parse it. For example the built-in types =:integer= and =:string= are defined as:
-
-#+begin_src common-lisp
-(register-param-parser :type :string
-                       :parse-function 'identity
-                       :condition (lambda (param) (ppcre:scan "^.+$" param)))
-
-(register-param-parser :type :integer
-                       :parse-function 'parse-integer
-                       :condition (lambda (param) (ppcre:scan "^[0-9]+$" param)))
-#+end_src
-
-Now, for the string parameter, the condition is a function that makes sure it's not an empty string using a simple regular expression and the parse function is ='identity= because there isn't anything to parse, the value is captured as is. But for the integer it's a bit more complicated. The condition function makes sure the path component is parsable as an integer.
-
-This is important for another reason. At any level of the tree there could be multiple children that potentially match the path component. For example:
-
-#+begin_src common-lisp
-  (define-app root ()
-    (:uri "/user/bob" 'bob-handler)
-    (:uri "/user/:name" 'name-handler)
-    (:uri "/user/:user_id|integer" 'user-id-handler))
-
-  (find-route #'root "/user/bob") ; => (values BOB-HANDLER NIL)
-  (find-route #'root "/user/alice") ; => (values NAME-HANDLER '((:NAME . "alice")))
-  (find-route #'root "/user/11") ; => (values USER-ID-HANDLER '((:USER_ID . 11)))
-#+end_src
-
-So what's going on here? At the ="/user"= level we've defined 3 children, one named by the literal path component ="bob"= , one named by the type =:string= and one named by the type =:integer=. When we try to match a path component to a child router, first we look for a literal match, so ="/user/bob"= will match the child that contains the =bob-handler= route. But ="/user/alice"= doesn't match a literal child. We have to try variable capture matching.
-
-Internally to Nite there is a registry of param-parser objects =*param-parsers*. It's a simple list we push to with =register-param-parser=. So it's ordered by specificity. So =:string= being defined first is least specific. The next one defined is =:integer= so it's more specific. Any user defined param parsers will be more specific than integer because they appear earlier in the registry list.
-
-What =find-route= does when it doesn't match a literal child is simple:
- - First it goes through all the param parsers registered in the internal registry. 
- - Then it checks to see if a child of that type is in the current router
- - Then it calls the param-parser's condition function on the path-component. 
- - If it matches, the value is parsed and pushed to the param-capture result alist with the appropriate name keyword. 
- - If not, it moves on to the next param parser in the registry. 
- - If none match, a match is not found and the function returns nil. 
-
-This is important to understand if you ever define conflicting matching children, or if you have custom marchers that might "steal" a match from a less specific child. Care is needed to make sure the library does what you expect.
-
-Internally this is done with the =param-parser= class. You can of course subclass it and manually push your instance into =*param-parsers*=.
+The package =nite.router= also exports it's low-level API in case you decide to play around with subclassing routers, but beyond docstrings, those functions are not currently documented and are subject to change.
 
 ** Notes on subclassing =app=, =handler= and =handler-set=
 

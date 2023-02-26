@@ -18,7 +18,7 @@
 ;;;;    along with Nite. If not, see <http://www.gnu.org/licenses/>.
 
 
-(defpackage #:nite.test.request
+(defpackage #:nite.test.response
   (:use #:cl
         #:nite.response
         #:parachute)
@@ -26,7 +26,7 @@
   (:export
    #:test-response))
 
-(in-package #:nite.test.request)
+(in-package #:nite.test.response)
 
 (define-test test-response
   :parent 'nite.test:nite-test

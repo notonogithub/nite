@@ -21,7 +21,7 @@
   :description "Common lisp web framework"
   :author "Pavel Penev (Lispegistus) <lispegistus@strangestack.com>"
   :license  "GPL-3.0"
-  :version "0.1.0"
+  :version "0.2.0"
   :serial t
   :depends-on (#:alexandria
                #:serapeum
@@ -40,10 +40,10 @@
   :pathname "src"
   :components ((:module "core"
                 :serial t
-                :components ((:file "request")
+                :components ((:file "router")
+                             (:file "request")
                              (:file "response")
                              (:file "handler")
-                             (:file "router")
                              (:file "app")
                              (:file "nite"))))
   :in-order-to ((asdf:test-op (asdf:test-op :nite/test))))
@@ -52,7 +52,7 @@
   :description "Test system for nite"
   :author "Pavel Penev (Lispegistus) <lispegistus@strangestack.com>"
   :license  "GPL-3.0"
-  :version "0.1.0"
+  :version "0.2.0"
   :serial t
   :depends-on (#:nite
                #:parachute)
@@ -60,9 +60,9 @@
   :components ((:file "nite-test") ;; Main entry point for running all test cases.
                (:module "core"
                 :serial t
-                :components ((:file "request")
+                :components ((:file "router")
+                             (:file "request")
                              (:file "response")
                              (:file "handler")
-                             (:file "router")
                              (:file "app"))))
   :perform (asdf:test-op (op c) (uiop:symbol-call :parachute :test :nite.test)))

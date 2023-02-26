@@ -17,6 +17,8 @@
 ;;;;    You should have received a copy of the GNU General Public License
 ;;;;    along with Nite. If not, see <http://www.gnu.org/licenses/>.
 
+;; router
+
 (defpackage #:nite.router
   (:use #:cl #:iterate)
   (:import-from #:bind
@@ -25,110 +27,64 @@
                 #:hash-table-keys
                 #:make-keyword)
   (:export
-   ;; Templates
-   #:*param-parsers*
-   #:param-parser
-   #:param-parser-type
-   #:param-parser-parse-function
-   #:param-parser-condition
-   #:register-param-parser
    #:parse-string-template
    #:unparse-string-template
    #:concatenate-string-template
-   ;; Router classes
+   #:node
+   #:node-route
+   #:node-children
+   #:node-path-component
+   #:merge-nodes
+   #:build-path
+   #:add-route-at-path
+   #:merge-node-at-path
+   #:walk-nodes
+   #:param-capture-children-p
+   #:param-capture
+   #:find-child
+   #:find-path
+   ;; high-level API
+   #:*router*
    #:router
-   #:param-router
-   ;; Router slot accessors
-   #:router-children
-   #:router-route-handler
-   #:router-route-tag
-   #:router-param-name
-   #:router-name
-   ;; Low-level router operations
-   #:router-set-child
-   #:router-get-child
-   #:router-add-route-handler
-   #:merge-routers
-   #:router-add-subrouter
-   ;; Router API
+   #:router-route-map
+   #:router-route-name-map
+   #:rebuild-route-map
    #:find-route
-   #:walk-router))
+   #:find-route-uri
+   #:connect
+   #:mount
+   #:route-map-pretty))
 
 (in-package #:nite.router)
 
-;; Templates and parameter parsing.
-
-(defparameter *param-parsers* nil
-  "registry of param-parsers. alist, should be sorted in order of specificity.
-For example integer is more specific than string, and should appear before it.")
-
-(defclass param-parser ()
-  ((parser-type
-    :reader param-parser-type
-    :initarg :type
-    :type keyword
-    :documentation "keyword naming the param-parser type. Will appear in templates as \"<name>|<type>.")
-   (parse-function
-    :reader param-parser-parse-function
-    :initarg :parse-function
-    :type (or function symbol)
-    :documentation "Function. Takes one string argument and transforms it in some way.")
-   (condition
-    :reader param-parser-condition
-    :initarg :condition
-    :type (or function symbol)
-    :documentation "Function. Takes one string argument and tests if it's a valid value for the parse-function."))
-  (:documentation "param parser specifies how parameter capture variables are to be parsed.
-In string templates a parameter capture variable is defined by the form :<name>|<type>
-where the <name> is the name of the variable and the <type> optional(default is :string).
-Type must be a registered param-parser type. By default :string and :integer are provided.
-An invalid type will default to string.
-A param-parser has two functions the condition function tests the path component if it's parsable,
-the parse-function parses it."))
-
-(defun register-param-parser (&key type parse-function condition)
-  "Register a param-parser and adds it to *param-parsers*. Arguments
-:type the type of the param-parser, should be a keyword.
-:parse-function a function of one string argument that returns a parsed object.
-:condition a bool function of one string argument. Should test if the path component is parsable by the parse-function"
-  (push (cons type (make-instance 'param-parser
-                                  :type type
-                                  :parse-function parse-function
-                                  :condition condition))
-        *param-parsers*))
-
-;; Default param parsers
-
-(register-param-parser :type :string
-                       :parse-function 'identity
-                       :condition (lambda (param) (ppcre:scan "^.+$" param)))
-
-(register-param-parser :type :integer
-                       :parse-function 'parse-integer
-                       :condition (lambda (param) (ppcre:scan "^[0-9]+$" param)))
+;; Low-level implementation of the router tree
 
 (defun parse-string-template (string-template)
-  "Parses a string URI template to a list of path components. Input can include parameter capture variables.
+  "Parses a string URI template to a list of path components. Input can include parameter capture variables
+and a special * wildcard variable. The * must be at the end of the path, anything after it will be ignored.
 Example:
   \"/foo/bar\" -> (\"\" \"foo\" \"bar\")
   \"/foo/:name|string/:id|integer\" -> (\"\" \"foo\" (:name :string) (:id :integer))
-  \"/foo/:name/:id|integer\" -> (\"\" \"foo\" (:name :string) (:id :integer))"
-  (bind (((:labels parse-param-capture (path-component))
-          (bind (((name &optional (parser-name "string")) (str:split "|" path-component))
-                 (name (make-keyword (str:upcase (string-left-trim ":" name))))
-                 (parser-name (make-keyword (str:upcase parser-name))))
-            (list name (if (assoc parser-name *param-parsers*) parser-name :string)))))
-    (iter (for component in (str:split "/" string-template))
-          (if (str:starts-with-p ":" component)
-              (collect (parse-param-capture component))
-              (collect component)))))
+  \"/foo/:name/:id|integer\" -> (\"\" \"foo\" (:name :string) (:id :integer))
+  \"/foo/*\" -> (\"\" \"foo\" (:* :wild)"
+  (iter (for path-component in (str:split "/" string-template))
+    (when (string= "*" path-component)
+      (collect (cons :* :wild))
+      (finish))
+    (if (str:starts-with-p ":" path-component)
+        (bind (((name &optional (parser-name "string")) (str:split "|" path-component)))
+          (collect (cons (make-keyword (str:upcase (string-left-trim ":" name)))
+                         (make-keyword (str:upcase parser-name)))))
+        (collect path-component))))
 
-(defun unparse-string-template (list-template)
+(defun unparse-string-template (list-template &optional params)
   "Generate a string template from a parsed list template"
   (str:join "/" (iter (for path-component in list-template)
                       (collect (if (stringp path-component)
                                    path-component
-                                   (apply 'format nil ":~A|~A" path-component))))))
+                                   (if (eql :* (car path-component))
+                                       "*"
+                                       (format nil ":~A|~A" (car path-component) (cdr path-component))))))))
 
 (defun concatenate-string-template (prefix template)
   "Concatenate two template strings while keeping slashes consistent"
@@ -144,192 +100,250 @@ Example:
            (str:concat "/" prefix (if trailing-slash "/" "")))
           (t (str:concat "/" prefix "/" template (if trailing-slash "/" ""))))))
 
-;; Router
+;; tree code
+
+(defclass node ()
+  ((route :accessor node-route
+          :initarg :route
+          :initform nil
+          :type (or null cons)
+          :documentation "Route object, either nil or (cons <route-handler> <route-name>)") 
+   (children :accessor node-children
+             :initform (make-hash-table :test #'equalp)
+             :type hash-table
+             :documentation "Table of child nodes.")
+   (path-component :accessor node-path-component
+                   :initarg :path-component
+                   :initform nil
+                   :type (or null cons string)
+                   :documentation "The path-component the node represents in the tree.")))
+
+(defun merge-nodes (node1 node2 &optional path-component)
+  "Create a new node and recursively node1 and node2 into it with node2 taking priority.
+Optionally you can set the path-component of the new node manually, otherwise the path component
+of node2 will be used."
+  (bind (((:labels copy-node (node))
+          (let ((new-node (make-instance 'node
+                                         :path-component (node-path-component node)
+                                         :route (node-route node))))
+            (iter (for (key child) in-hashtable (node-children node))
+                  (setf (gethash key (node-children new-node))
+                        (copy-node child)))
+            new-node))
+         (new-node (make-instance 'node
+                                  :route (or (node-route node2) (node-route node1))
+                                  :path-component (or path-component (node-path-component node2))))
+         (node1 (copy-node node1))
+         (node2 (copy-node node2))
+         (common-children (intersection (hash-table-keys (node-children node1))
+                                        (hash-table-keys (node-children node2))))
+         (node1-unique-children (set-difference (hash-table-keys (node-children node1))
+                                                (hash-table-keys (node-children node2))))
+         (node2-unique-children (set-difference (hash-table-keys (node-children node2))
+                                                (hash-table-keys (node-children node1)))))
+        (iter (for key in node1-unique-children)
+              (setf (gethash key (node-children new-node))
+                    (gethash key (node-children node1))))
+        (iter (for key in node2-unique-children)
+              (setf (gethash key (node-children new-node))
+                    (gethash key (node-children node2))))
+        (iter (for key in common-children)
+              (setf (gethash key (node-children new-node))
+                    (merge-nodes (gethash key (node-children node1))
+                                 (gethash key (node-children node2)))))
+        new-node))
+
+(defun build-path (node path-component rest fn)
+  "Build a path of nodes in the tree NODE, creating new nodes if they don't exist, call a function on the last child.
+PATH-COMPONENT is the first path component, REST contains the rest of the path.
+FN is a function of 3 arguments, the parent node, the last child node and the path component of the child."
+  ;; Find the child or create it if it doesn't exist
+  (let ((child
+          (let ((key (if (consp path-component) (cdr path-component) path-component)))
+            (or (gethash key (node-children node))
+                (setf (gethash key (node-children node))
+                      (make-instance 'node :path-component path-component))))))
+    (if rest
+        (build-path child (car rest) (cdr rest) fn)
+        (funcall fn node child path-component))))
+
+(defun add-route-at-path (root path route-handler &optional route-name)
+  "Add a route to the root node at path."
+  (if (or (string= path "/")
+          (string= path "")
+          (null path))
+      (setf (node-route root) (cons route-handler route-name))
+      (bind (((path-component . rest) (parse-string-template (string-left-trim "/" path))))
+        (build-path root
+                    path-component
+                    rest
+                    (lambda (parent-node child path-component)
+                      (declare (ignore parent-node path-component))
+                      (setf (node-route child) (cons route-handler route-name)))))))
+
+(defun merge-node-at-path (root path node)
+  "Find or create a new node to path, and then merge NODE with it."
+  (if (or (string= path "/")
+          (string= path "")
+          (null path))
+      (progn (setf (node-route root) (or (node-route node) (node-route root)))
+             (merge-nodes root node))
+      (bind (((path-component . rest) (parse-string-template (string-left-trim "/" path))))
+        (build-path root
+                    path-component
+                    rest
+                    (lambda (parent-node child path-component)
+                      (setf (gethash (if (consp path-component)
+                                         (cdr path-component)
+                                         path-component)
+                                     (node-children parent-node))
+                            (merge-nodes child node path-component)))))))
+
+(defun walk-nodes (function node &optional (path '("")))
+  "Visit every node in a tree, applying FUNCTION to it.
+FUNCTION takes 2 arguments, the child and the string path to the child."
+  (iter (for (path-component child) in-hashtable (node-children node))
+    (let* ((child-path (concatenate 'list path (if (stringp path-component)
+                                                   (list path-component)
+                                                   (list (node-path-component child))))))
+      (funcall function child (unparse-string-template child-path))
+      (walk-nodes function child child-path))))
+
+(defun param-capture-children-p (node)
+  "Predicate, returns nil if none of the node children can perform parameter capture"
+  (remove-if-not #'keywordp (hash-table-keys (node-children node))))
+
+(defun param-capture (node path-component &optional rest)
+  "Given a node and a path component and optionally the rest of the path,
+if the node can perform parameter capture return the child that matched and the captured parameters."
+  (let ((integer-child (gethash :integer (node-children node)))
+        (string-child (gethash :string (node-children node)))
+        (wild-child (gethash :wild (node-children node))))
+    (when (and integer-child (ppcre:scan "^[0-9]+$" path-component))
+      (return-from param-capture (values integer-child (cons (car (node-path-component integer-child)) (parse-integer path-component)))))
+    (when string-child
+      (return-from param-capture (values string-child (cons (car (node-path-component string-child)) path-component))))
+    (when wild-child
+      (return-from param-capture (values wild-child (cons :* (str:join "/" (cons path-component rest))))))))
+
+(defun find-child (node path-component &optional rest)
+  "Find the child in node, if the path is not found, attempt to capture parameters"
+  (let ((child (gethash path-component (node-children node))))
+    (cond (child (values child nil))
+          ((param-capture-children-p node) (param-capture node path-component rest))
+          (t (values nil nil)))))
+
+(defun find-path (root path)
+  "Find the node-route of the node designated by path."
+  (bind (((:labels find-path-internal (node path-component rest params))
+          (bind (((:values child p) (find-child node path-component rest))
+                 (params (if p (cons p params) params)))
+            (cond ((and child rest)
+                   (if (assoc :* params)
+                       (values (car (node-route child)) params)
+                       (find-path-internal child (car rest) (cdr rest) params)))
+                  (child (values (car (node-route child)) params))
+                  (t (values nil params)))))
+         (path (parse-string-template (string-left-trim "/" path))))
+    (if (equal '("") path)
+        (values (car (node-route root)) nil)
+        (find-path-internal root (car path) (cdr path) nil))))
+
+;; High-level API
+
+(defparameter *router* nil)
 
 (defclass router ()
-  ((children
-    :accessor router-children
-    :initform (make-hash-table :test #'equalp)
-    :type hash-table
-    :documentation "equalp hash-table containing the children routers. Keys are either a literal path-component
-or a keyword denoting a param-parser type used for parameter capture.")
-   (route-handler
-    :accessor router-route-handler
-    :initarg :route-handler
-    :initform nil
-    :documentation "Leaf of the router tree. Can be any arbitrary object.
-It is assumed that this would be some sort of route handler in a web-framework context.")
-   (route-tag
-    :accessor router-route-tag
-    :initarg :route-tag
-    :initform nil
-    :type (or null keyword)
-    :documentation "(Optional) Route tag is a keyword used for reverse lookup.
-Instead of searching the tree by matching a path, search the tree for a specific route-tag
-and return it's route-handler"))
-  (:documentation "A router contains information about URI paths. A router is a tree node representing the URI routes.
-Each router is denoted by a single path component and contains a table of it's children with the child path components
-as the keys.
-Each router can contain a route-handler object, that is a leaf of the tree.
-Optionally they can have a route-tag keyword attatched
-The route-tag can be used for reverse lookup to find a path. This is useful for things like redirects."))
+  ((root :accessor router-root-node
+         :initarg :root
+         :initform (make-instance 'node :path-component "")
+         :type node
+         :documentation "Root node of the router route tree")
+   (route-map :accessor router-route-map
+              :initform (make-hash-table)
+              :type hash-table
+              :documentation "Map of routes for easier debugging")
+   (route-name-map :accessor router-route-name-map
+                   :initform (make-hash-table)
+                   :type hash-table
+                   :documentation "Reverse lookup map"))
+  (:documentation "Map of routes."))
 
-(defclass param-router (router)
-  ((param-name
-    :accessor router-param-name
-    :initarg :param-name
-    :type keyword
-    :documentation "Keyword. Name of param capture variable."))
-  (:documentation "param-router is a subclass of router that includes a param-name slot,
-used in the route tree for param capture. While a regular router stands in the tree for a literal path-component,
-the param-router stands for a variable-capture component that will do param-parsing during search."))
+(defun rebuild-route-map (router)
+  "Rebuild an router's reverse lookup maps."
+  ;; Clear the route maps
+  (setf (router-route-name-map router) (make-hash-table))
+  (setf (router-route-map router) (make-hash-table))
+  ;; walk-node visits every child, we check if the child has a route assosiated with it and put it in the maps.
+  (if (node-route (router-root-node router))
+      (bind (((route-handler . route-name) (node-route (router-root-node router))))
+        (when (and route-name (not (member route-name (hash-table-keys (router-route-name-map router)))))
+          (setf (gethash route-name (router-route-name-map router)) "/"))
+        (when route-handler
+          (setf (gethash "/" (router-route-map router)) (list route-handler route-name)))))
+  (walk-nodes
+   (lambda (child path)
+     (when (node-route child)
+       (bind (((route-handler . route-name) (node-route child)))
+         (when (and route-name (not (member route-name (hash-table-keys (router-route-name-map router)))))
+           (setf (gethash route-name (router-route-name-map router)) path))
+         (when route-handler
+           (setf (gethash path (router-route-map router)) (list route-handler route-name))))))
+   (router-root-node router)))
 
-(defgeneric router-set-child (router path-spec child)
-  (:documentation "Set a child in the router child table. path-spec must be a string denoting a path-component,
-a keyword denoting a param-parser or a list denoting a variable capture path-component")
-  (:method ((router router) (path-spec string) (child router))
-    "Set a child in the router child table, path-spec must be a string denoting a path-component"
-    (setf (gethash path-spec (router-children router)) child))
-  (:method ((router router) (param-capture cons) (child router))
-    "Set a child in the router child table, param-capture must be a list denoting a variable capture path-component"
-    (router-set-child router (second param-capture) child))
-  (:method ((router router) (param-parser-type symbol) (child router))
-    "Set a child in the router child table, param-parser-type must be a keyword denoting a registered param-parser"
-    (setf (gethash param-parser-type (router-children router)) child)))
+(defun find-route (uri &key (router *router*))
+  "Find a route in router"
+  (find-path (router-root-node router) uri))
 
-(defgeneric router-get-child (router path-spec &key ensure)
-  (:documentation "Get a child from the router child table denoted by path-spec. Path-spec must be a string denoting a
-path-component or a list denoting a variable capture path-component.
-Optional ensure argument creates an empty child router of the apropriate type if one is not found.")
-  (:method ((router router) (path-spec string) &key (ensure nil))
-    "Get a child from the router child table denoted by path-spec. Path-spec must be a string denoting a path-component
-Optional ensure keyword argument creates an empty child router if one is not found."
-    (or (gethash path-spec (router-children router))
-        (when ensure
-          (router-set-child router path-spec (make-instance 'router)))))
-  (:method ((router router) (param-type symbol) &key ensure)
-    "Get a child from the router child table denoted by param-capture.
-param-capture must be a list denoting a variable capture path-component.
-Optional ensure keyword argument does nothing in this case because there is no information about the param-name."
-    (declare (ignore ensure))
-    (gethash param-type (router-children router)))
-  (:method ((router router) (param-capture cons) &key (ensure nil))
-    "Get a child from the router child table denoted by param-capture.
-param-capture must be a list denoting a variable capture path-component.
-Optional ensure keyword argument creates an empty child param-router and sets it's param name if one is not found."
-    (let ((param-name (first param-capture))
-          (param-type (second param-capture)))
-      (or (gethash param-type (router-children router))
-          (when ensure
-            (router-set-child router param-capture (make-instance 'param-router :param-name param-name)))))))
+(defun find-route-uri (route-name &key (router *router*) (params nil))
+  "Attempt to find a uri that will match a given route in router given a route-name.
+Because the route might have variable capture keys on it's path, you must provide a plist of
+apropriate variable capture values in order to build a valid path."
+  (when (gethash route-name (router-route-name-map router))
+      (str:join "/"
+                (iter (for path-component in (parse-string-template (gethash route-name (router-route-name-map router))))
+                  (collect (if (stringp path-component)
+                               path-component
+                               (format nil "~A" (getf params (car path-component)))))))))
 
-(defun router-add-route-handler (router template route-handler &optional (route-tag nil))
-  "Add route-handler to a router. template can be any valid URI template, either a string or a parsed template.
-router-add-route-handler will automatically create child routers for each path component if they do not exist.
-route-handler can be any object stored as a leaf in the tree.
-route-tag is an optional parameter used uniquely identify a route"
-  (if (stringp template)
-      (router-add-route-handler router
-                                (parse-string-template (string-left-trim "/" template))
-                                route-handler
-                                route-tag)
-      (bind (((head . tail) template)
-             (child (router-get-child router head :ensure t)))
-        (if (null tail)
-            (setf (router-route-tag child) route-tag
-                  (router-route-handler child) route-handler)
-            (router-add-route-handler child tail route-handler route-tag)))))
+(defgeneric connect (router uri handler &optional name rebuild)
+  (:documentation "Connect a route in the router. Optional rebuild parameter rebuilds the routeers reverse route map.
+If nil, you will have to manually call REBUILD-ROUTE-MAP for reverse lookup to work correctly.")
+  (:method ((router router) uri handler &optional (name nil) (rebuild nil))
+    (add-route-at-path (router-root-node router) uri handler name)
+    (when rebuild
+      (rebuild-route-map router))
+    router))
 
-(defun copy-children (new-router router1 router2)
-  "Recursively copy the children of router1 and router2 in new-router."
-  (let ((common-children (intersection (hash-table-keys (router-children router1))
-                                       (hash-table-keys (router-children router2))))
-        (router1-unique-children (set-difference (hash-table-keys (router-children router1))
-                                                 (hash-table-keys (router-children router2))))
-        (router2-unique-children (set-difference (hash-table-keys (router-children router2))
-                                                 (hash-table-keys (router-children router1)))))
-    (iter (for key in router1-unique-children)
-          (setf (gethash key (router-children new-router))
-                (gethash key (router-children router1))))
-    (iter (for key in router2-unique-children)
-          (setf (gethash key (router-children new-router))
-                (gethash key (router-children router2))))
-    (iter (for key in common-children)
-          (setf (gethash key (router-children new-router))
-                (merge-routers (gethash key (router-children router1))
-                               (gethash key (router-children router2))))))
-  new-router)
+(defgeneric mount (router uri subrouter &optional route-name-prefix rebuild)
+  (:documentation "Mount a subrouter to a URI in ROUTER. Optionally you can provide a route-name-prefix,
+this must be an uppercase string, such as \"PREFIX-\" that will be prepended to the names of all
+route-name keywords in the subrouter.
+Optional rebuild parameter rebuilds the routeers reverse route map.
+If nil, you will have to manually call REBUILD-ROUTE-MAP for reverse lookup to work correctly.
+")
+  (:method ((router router) uri (subrouter router) &optional (route-name-prefix nil) (rebuild nil))
+    (let ((new-subrouter-node (merge-node-at-path (router-root-node router)
+                                                  uri
+                                                  (router-root-node subrouter))))
+      (when route-name-prefix
+        (walk-nodes (lambda (child path)
+                      (declare (ignore path))
+                      (when (node-route child)
+                        (bind (((_ . route-name) (node-route child)))
+                          (if route-name
+                              (setf (node-route child)
+                                    (cons route-name
+                                          (make-keyword (str:concat route-name-prefix
+                                                                    (symbol-name route-name)))))))))
+                    new-subrouter-node))
+      (when rebuild
+        (rebuild-route-map router))
+      router)))
 
-(defgeneric merge-routers (router1 router2)
-  (:documentation "Merge two routers, result is a new router who's children are merged children of the source routers.
-The algorithm is recursive and creates new routers and does not modify it's arguments.
-In case of clashing values, values from router2 take priority and override the ones in router1.")
-  (:method (router1 router2)
-    (let ((new-router (make-instance 'router
-                                     :route-handler (or (router-route-handler router2) (router-route-handler router1))
-                                     :route-tag (or (router-route-tag router2) (router-route-tag router1)))))
-      (copy-children new-router router1 router2)))
-  (:method ((router1 param-router) router2)
-    (let ((new-router (make-instance 'param-router
-                                     :param-name (router-param-name router1)
-                                     :route-handler (or (router-route-handler router2) (router-route-handler router1))
-                                     :route-tag (or (router-route-tag router2) (router-route-tag router1)))))
-      (copy-children new-router router1 router2)))
-  (:method (router1 (router2 param-router))
-    (let ((new-router (make-instance 'param-router
-                                     :param-name (router-param-name router2)
-                                     :route-handler (or (router-route-handler router2) (router-route-handler router1))
-                                     :route-tag (or (router-route-tag router2) (router-route-tag router1)))))
-      (copy-children new-router router1 router2))))
-
-(defun router-add-subrouter (router template subrouter)
-  "Add a subrouter to the router at the position denoted by the optional keyword argument template.
-If a child already exists at that location the child will be recursively merged with subrouter.
-If conflicting values are found, values from the subrouter will override the values in the preexisting child."
-  (if (stringp template)
-      (router-add-subrouter router (parse-string-template (string-left-trim "/" template))
-                            subrouter)
-      (bind (((head . tail) template)
-             (child (router-get-child router head :ensure t)))
-        (cond ((and (stringp head) (str:emptyp head)) (router-add-subrouter router tail subrouter))
-              ((null tail) () (router-set-child router head (merge-routers child subrouter)))
-              (t (router-add-subrouter child tail subrouter))))))
-
-(defun find-route (router uri)
-  "Find a route in the tree denoted by router given a uri, performing variable capture allong the way.
-Returns two values, the route object and an alist of variable capture params."
-  (bind (((:labels match-child (router path-component &optional (params nil)))
-          (bind ((child (router-get-child router path-component)))
-            (if child
-                (values child params)
-                (progn ;; a child was not found, so we search the param parser definitions for a possible match.
-                  (iter (for (param-parser-type . param-parser) in *param-parsers*)
-                        (let ((child (router-get-child router param-parser-type)))
-                          (if (and child (funcall (param-parser-condition param-parser) path-component))
-                              (return-from match-child
-                                (values child
-                                        ;; add the parsed parameter to the params alist
-                                        (cons (cons (router-param-name child)
-                                                    (funcall (param-parser-parse-function param-parser) path-component))
-                                              params))))))
-                  (values nil params)))))
-         ((:labels find-route-internal (router uri &key (params nil)))
-          (bind (((head . tail) uri))
-            (if (and (str:emptyp head) tail)
-                (find-route-internal router tail :params params)
-                (bind (((:values child params) (match-child router head params)))
-                  (cond ((and child tail) (find-route-internal child tail :params params))
-                        ((and child (null tail)) (values (router-route-handler child) params))
-                        (t (values nil params))))))))
-    (find-route-internal router (if (stringp uri)
-                                    (parse-string-template uri)
-                                    uri))))
-
-(defun walk-router (router path function)
-  (iter (for (child-path-component child) in-hashtable (router-children router))
-        (let* ((child-path (concatenate 'list path (if (stringp child-path-component)
-                                                       (list child-path-component)
-                                                       (list (list (router-param-name child)
-                                                                   child-path-component))))))
-          (funcall function child-path child)
-          (walk-router child child-path function))))
+(defgeneric route-map-pretty (router)
+  (:documentation "Return a solted alist of the route-map for debugging")
+  (:method ((router router))
+    (sort (alexandria:hash-table-alist (router-route-map router))
+          #'string<
+          :key #'car)))

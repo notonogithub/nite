@@ -21,22 +21,31 @@
   (:import-from #:nite.handler
                 #:define-handler
                 #:define-handler-set)
+  (:import-from #:nite.router
+                #:*router*
+                #:router
+                #:find-route
+                #:find-route-uri
+                #:connect
+                #:mount
+                #:rebuild-route-map)
   (:import-from #:nite.app
                 #:define-app
                 #:with-app
-                #:find-route-uri
                 #:app
-                #:*app*
                 #:*request*
                 #:*debug*)
   (:export
+   #:*request*
+   #:*router*
    #:define-handler
    #:define-handler-set
    #:define-app
    #:with-app
-   #:find-route-uri
    #:app
-   #:*app*
-   #:*request*
-   #:*debug*))
-
+   #:router
+   #:find-route
+   #:find-route-uri
+   #:connect
+   #:mount
+   #:rebuild-route-map))

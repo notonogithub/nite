@@ -33,24 +33,24 @@ The organization of tasks in this file is as follows:
 
 
 * Releases
-** RELEASE 0.2.0
-*** TODO Fix main branch
-*** TODO Backlog grooming
-*** FEATURE Router refactoring
+** PUBLISHED 0.2.0
+CLOSED: [2023-02-26 Sun 17:40]
+*** DONE Fix main branch
+    CLOSED: [2023-02-25 Sat 13:46]
+*** DONE Backlog grooming
+CLOSED: [2023-02-26 Sun 17:40]
+*** MERGED Router refactoring
+CLOSED: [2023-02-26 Sun 17:40]
 
     The router code is undoubtedly the most complicated part of Nite at the moment and while the general concept is sound, the implementation still feels a bit brittle and hard to extend, and we'll need a lot from it.
 
-
-** Backlog
-
-*** FEATURE Parameter capture should include a wildcard type.
+*** MERGED Parameter capture should include a wildcard type.
+CLOSED: [2023-02-26 Sun 17:40]
 
     Implementing a wildcard type that captures the entire rest of the URI will be useful. We'll have to figure out how to detect incompatible parameter capture siblings since we currently depend on order of defined parameter parsers, but a whildcard and a string parameter capture would be incompatible in the same group.
 
-*** FEATURE Handler conditions
 
-    Handlers predicate system should raise a condition when they cannot handle the request instead of returning nil.
-
+** RELEASE 0.3.0
 *** FEATURE   Route tags should be unique
 
     Currently as we traverse the route tree if we encounter the same route tag we only take the first into the route map. Perhaps issue a warning?
@@ -65,6 +65,12 @@ The organization of tasks in this file is as follows:
   - the mount operation should be able to configure all child routes and handlers a certain way.
   - modules should be nestable. A module made of other modules.
   - Most likely this should be implemented as an app class.
+
+** Backlog
+
+*** FEATURE Handler conditions
+
+    Handlers predicate system should raise a condition when they cannot handle the request instead of returning nil.
 
 *** FEATURE Middleware
 

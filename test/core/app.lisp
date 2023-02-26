@@ -22,6 +22,9 @@
         #:nite.app
         #:parachute)
   (:import-from #:bind #:bind)
+  (:import-from #:nite.router
+                #:find-route-uri
+                #:*router*)
   (:export
    #:test-find-route-uri))
 
@@ -31,9 +34,9 @@
   :parent 'nite.test:nite-test
   (define-app test1 ()
     (:uri "/hello/world" :hello-route :hello-route-tag))
-  (is string= (find-route-uri :hello-route-tag :app #'test1) "/hello/world")
+  (is string= (find-route-uri :hello-route-tag :router #'test1) "/hello/world")
   (define-app test2 ()
     (:uri "/hello/:name/:id|integer" :hello-route :hello-route-tag))
-  (is string= (find-route-uri :hello-route-tag :app #'test2 :params '(:id 11 :name "world")) "/hello/world/11")
-  (let ((*app* #'test2))
+  (is string= (find-route-uri :hello-route-tag :router #'test2 :params '(:id 11 :name "world")) "/hello/world/11")
+  (let ((*router* #'test2))
     (is string= (find-route-uri :hello-route-tag :params '(:id 11 :name "world")) "/hello/world/11")))
