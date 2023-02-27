@@ -341,7 +341,7 @@ If nil, you will have to manually call REBUILD-ROUTE-MAP for reverse lookup to w
         (rebuild-route-map router))
       router)))
 
-(defgeneric route-map-pretty (router)
+(defgeneric route-map-alist (router)
   (:documentation "Return a solted alist of the route-map for debugging")
   (:method ((router router))
     (sort (alexandria:hash-table-alist (router-route-map router))

@@ -230,7 +230,7 @@ In the context of handler bodies, where the =*router*= variable is bound to the 
 
 The package =nite.router= defines our router objects and their protocol. This section doesn't document the entire protocol and is given as a general introduction. Usually you won't be creating routers manually and most of this section is not relevant for day to day web development, but is provided for additional context and in case you want to play around and extend things.
 
-In addition to the tree of nodes representing our URI space, a router maintains a reverse lookup table. And also a table of routes that have been added to it, this table is for debugging purposes so you can see what routes are represented in the tree. You can get an alist of them sorted alphabetically with the =nite.router:route-map-pretty=. When you add connect a new route or mount a subrouter, you might have to run the function =nite.router:rebuild-route-map= in order to make the reverse lookup work correctly.
+In addition to the tree of nodes representing our URI space, a router maintains a reverse lookup table. And also a table of routes that have been added to it, this table is for debugging purposes so you can see what routes are represented in the tree. You can get an alist of them sorted alphabetically with the =nite.router:route-map-alist=. When you add connect a new route or mount a subrouter, you might have to run the function =nite.router:rebuild-route-map= in order to make the reverse lookup work correctly.
 
 There are two functions that add a route to a router:
  - =nite.router:connect (router uri handler &optional name rebuild)= connects a route handler, optionally with a reverse lookup name in the router at the specified uri template. The optional rebuild argument(default nil) will rebuild the route map after the route has been added.
@@ -245,3 +245,7 @@ The package =nite.router= also exports it's low-level API in case you decide to 
 Subclassing any of these classes requires you to explicitly set the metaclass =closer-mop:funcallable-standard-class=, since they inherit from =closer-mop:funcallable-standard-object= you might get an error if you omit the metaclass.
 
 The =define-app= macro takes an optional =app-class= parameter to determine the class of the app, make sure it's a subclass of =app= though, or otherwise implements the app protocol.
+
+** See Also
+
+ - [[file:router.org][A detailed look at the implementation of routers]]

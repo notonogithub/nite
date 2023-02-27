@@ -1,0 +1,74 @@
+#+TITLE: NITE Routes Documentation
+#+AUTHOR: Pavel Penev (Lispegistus) <lispegistus@strangestack.com>
+#+OPTIONS: h:4
+#+STARTUP: showeverything
+#+OPTIONS: toc:t
+
+* Introduction
+
+As of writing this, we are at version =0.2.0= of Nite, the rest of the article describes the implementation of that version. As always, the API is subject to change before we hit =1.0.0=. All code discussed here is found in the file [[https://code.strangestack.com/StrangeStackPublic/nite/src/branch/main/src/core/router.lisp][=src/core/router.lisp=]] in the package =nite.router=.
+
+* Design Goal
+
+So the basic design goal here is simple:
+ - Sinatra-like routing.
+ - Template parameters like ="/foo/:param/"= matches any URI starting with ="foo"= and one more path component afterwards.
+ - Template parameters should support rudimentary parsing of at least integers, so that the URIs ="/foo/:name"= and ="/foo/:id|integer"= are not in conflict, ="/foo/11"= will match the latter, and ="/foo/bob"= will match  the former.
+ - Wildcard parameter like ="/foo/*"= matches any URI starting with ="foo".= We won't worry about templates like ="/foo/*/bar"=, we'll treat any template with a wildcard in it as if the wildcard was the last element for simplicity. Wildcards are used rarely, and usually they are to be used to short-circuit the routing and have the rest of the matched path be handled in a special way by the route handler anyway. 
+ - The URI space a router can handle is a tree, a route is a path through that tree, a route can be named by a keyword. The last child of that tree needs to point to a symbol or function that can handle a request for that URI.
+ - Reverse lookup, being able to find a valid URI based on the name keyword and given any template parameters we might need to construct it.
+ - The ability to mount multiple routes at once at some position in the tree.
+ - The ability to prepend a prefix to all the route names in case we're mounting them in more than one location
+ - The ability to visit all routes and modify them or extract information about them so we can implement modules.
+
+*  Templates
+
+A nite uri template is defined as a list of path-components, specified by the user as a string template where path-components are separated by ="/".= A path component can be a literal string which matches itself, or it can be a parameter capture component, represented as a cons pair =(cons <name> <type>)=. Tree types are defined: =:string= which matches anything and returns a string, =:integer= which matches strings that can be parsed by =parse-integer= and =:wild= which matches the entire rest of the URI path. A parameter capture path component is specified in the string template with the syntax =:name|type=, where the type is optional and it defaults to =:string=. The =*= wildcard character is handled specially and it yields the path component =(cons :* :wild)=.
+
+String templates are parsed with the function =parse-string-template=. The opposite function =unparse-string-template= takes a list of path-components and produces a string template. The function =concatenate-string-template= concatenates two string templates while handling all the ="/"= consistent with it's input.
+
+The string template ="/foo/:name/:id|integer"= will yield the following list template: =("" "foo" (:name :string) (:id :integer))=.
+
+* Nodes.
+
+Internally, rather than maintain a list of routes, we maintain a tree of path-components, and a route is defined as a path through that tree. For that we need a tree implementation that will serve our needs. The class =node= does that for us. It has the following slots:
+
+ - =route=, accessed by =rode-route= accessor is either =nil= if no route is defined at that node or it's a cons of the form =(route-handler . route-name)=. Generally the route handler can be any callable, but it's advisable for it to be a symbol naming a function so that dynamic redefinition can work. The route name can be nil if the route is unnamed, but then reverse lookup won't work, or it can be a keyword.
+ - =path-component=, accessed by =node-path-component= accessor is the path component it represents. This can be either a literal string or a cons as we saw in the previous section.
+ - =children=, accessed by =node-children= accessor is a hash-table of all the child nodes. The keys of the hash-table are the path-components of the children. Note however that in the case the path-component of a child is a cons representing parameter capture, the key will be it's type, rather than the entire cons. For example a child with the path-component =(:name . :string)= will use =:string= as the key in the hash-table of it's parent.
+
+We define several low-level operations on nodes:
+
+ - =merge-nodes (node1 node2 &optional path-component)= creates a new node and recursively copies node1 and node2 and all of their children into it. node2 will take priority as the idea is to be able to override values in node1. The optional =path-component= parameter allows you to set a custom path-component for the new node, if not provided, the path-component of node2 will be used.
+ - =build-path (node path-component rest fn)= Builds a path in =node=, creating any new children along the way if they don't already exist. =path-component= is the first element of the path, =rest= is the rest of it. Finally, call =fn= on last =parent= and =child= nodes and the last =path-component=. This can be useful if you're mounting a sub-router there or a new route.
+ - =merge-node-at-path (root path node)= uses =build-path= and =merge-nodes= to build a path in root and merge the last child with the =node=. This is how mounting sub-routers is implemented internally.
+ - =walk-nodes (function node &optional path)= walks all nodes in the tree denoted by =node= and calls =function= on each child node and the path that leads to it.
+ - =param-capture-children-p (node)= tests if a node has any children that can perform parameter capture, this is implemented by testing if any of the keys of the node-children hash-table are keywords.
+ - =param-capture (node path-component &optional rest)= attempts to do parameter capture, =node= is a parent node that contains parameter capture children, =path-component= is the part of the URI we're trying to match. =rest= is the rest of the URI. The function will first see if there's a =:integer= child and attempt to parse the =path-component= as an integer, then it will see if there's a =:string= child, finally it will check if there's a =:wild= child(hehe) and capture the entire rest of the path. Note that having a =:wild= child with a =:string= sibling will not work as the =:string= will always match first. Returns two  values, the child and a cons of the parameter capture name and the parsed parameter. In the case of =:wild= the name is =:*=.
+ - =find-child (node path-component &optional rest)= Tries to match path-component in the node's children. If a children named by a literal path-component is not found, it will call =param-capture=. Returns two values, the child and a cons of captured parameters. If it was a literal child, the second value will be nil.
+ - =find-path (root path)= Search the node for a route defined at =path=. Returns two values, the route handler, if it was found and an alist of all captured parameters it found along the path.
+
+These operations are not designed to be used by users, they are an implementation detail of the router API but sub-classing routers might require using these operations.
+   
+* Routers
+
+With these low-level operations we can implement our high-level Routing API. First is the =router= class. It has the following slots:
+
+ - =root=, accessed by the =router-root-node= accessor. This is a node with a path-component of =""= that will serve as the root of our route tree.
+ - =route-map=, accessed by the =router-route-map= accessor. This is a hash-table of all defined routes in the router. It is maintained automatically by the router API and is intended only for easier debugging, as inspecting tree objects in the lisp inspector can be very tedious.
+ - =route-name-map=, accessed by the =router-route-name-map= accessor. This is a map of route names and the paths that lead to those routes. This is used for reverse lookup. Like the =route-map= this is maintained automatically by the router api.
+
+The package provides a special variable =*router*= that can be bound during request handling to denote the currently used router.
+   
+The rest of the router API is as follows:
+   
+ - The function =rebuild-route-map (router)= can be used to manually rebuild these two maps. Internally it uses =walk-nodes= to visit every child and if a route is defined add it to the maps. Usually this will not have to be used manually.
+ - =find-route (uri &key (router *router*))= returns two values, a route handler and an alist of captured parameters.
+ - =find-route-uri (route-name &key (router *router*) (params nil)= is used for reverse lookup of route uris. =route-name= is a keyword naming a route, the =params= parameter must be a plist of values to substitute in the route path if there are any parameter capture variable.
+ - =connect (router uri handler &optional name rebuild)= Connect a route handler in the router. =uri= is a string template. Optionally you can give the route a name, the  =rebuild= parameter will rebuild the route-map if non-nil.
+ - =mount (router uri subrouter &optional route-name-prefix rebuild)= Mount a subrouter in the parent router. Optionally you can change the names of all routes in subrouter by passing the =route-name-prefix= parameter. That way you can mount a subrouter multiple times and still have unique route names. Note that route names are keywords, so =route-name-prefix= should be an upcased string, something like ="PREFIX-".
+ - =route-map-alist (router)= will return a sorted alist of the =route-map= so you can see all the defined routes in a router more easily.
+
+* Conclusion
+
+This code is far from "done". There will be minor changes to the high-level API, and possibly major changes to the underlying low-level api before we hit =1.0.0=, but for now it will have to do. All the code has unit tests, but it's hardly been exhaustively tested yet, bugs are more than likely. Some aspects of the design might prove too limiting for the future needs of Nite, or they might just be wrong. Once NITE hits =1.0.0= this might be split off into it's own library so it can be used independently of Nite, for now it will remain part as it's design will be informed mainly by the needs of Nite itself.
